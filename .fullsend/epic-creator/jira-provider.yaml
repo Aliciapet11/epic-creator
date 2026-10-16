@@ -1,0 +1,5 @@
+---
+name: epic-creator-jira
+type: epic-creator-jira
+credentials:
+  JIRA_TOKEN: "${JIRA_TOKEN}"

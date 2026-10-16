@@ -1,0 +1,8 @@
+version: "1"
+agents:
+  - name: epic-creator
+    source: harness/epic-creator.yaml
+    runtime: claude
+
+allowed_remote_resources:
+  - https://raw.githubusercontent.com/fullsend-ai/agents/

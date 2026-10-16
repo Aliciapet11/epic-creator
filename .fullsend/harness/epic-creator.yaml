@@ -1,0 +1,55 @@
+agent: epic-creator/prompt.md
+role: fullsend
+model: claude-opus-4-6
+effort: high
+image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:259605fea321353552fdefd3a6a55e8b5c260998dfc5a622ed143e41a429995a
+policy: https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/policies/base.yaml#sha256=3ed634401d87a1327fffe5e266272d930321484ce8a91dfa5fe447d4f2e00470
+
+plugins:
+  - plugins/epic-creator
+
+pre_script: epic-creator/pre-epic-creator.sh
+post_script: epic-creator/post-epic-creator.py
+
+host_files:
+  - src: epic-creator/gcp-vertex.env
+    dest: /sandbox/workspace/.env.d/gcp-vertex.env
+    expand: true
+  - src: ${GOOGLE_APPLICATION_CREDENTIALS}
+    dest: /tmp/.gcp-credentials.json
+
+validation_loop:
+  preflight_check: 'python3 -c "import jsonschema, yaml"'
+  script: epic-creator/validate-output.py
+  schema: epic-creator/result.schema.json
+  max_iterations: 2
+  feedback_mode: append
+
+timeout_minutes: 120
+
+env:
+  sandbox:
+    FULLSEND_TASK: "${FULLSEND_TASK}"
+    JIRA_SERVER: "${JIRA_SERVER}"
+    JIRA_USER: "${JIRA_USER}"
+    CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "20"
+    EPIC_CREATOR_ENABLE_CONTEXT_HOOK: "1"
+    EPIC_SKIP_BOOTSTRAP: "${EPIC_SKIP_BOOTSTRAP}"
+    EPIC_SKIP_COMPONENT_FETCH: "${EPIC_SKIP_COMPONENT_FETCH}"
+  runner:
+    FULLSEND_TASK: "${FULLSEND_TASK}"
+    FULLSEND_EXPECTED_STRATEGY_IDS: "${FULLSEND_EXPECTED_STRATEGY_IDS}"
+    JIRA_TOKEN: "${JIRA_TOKEN}"
+    EPIC_SKIP_BOOTSTRAP: "${EPIC_SKIP_BOOTSTRAP}"
+    EPIC_SKIP_COMPONENT_FETCH: "${EPIC_SKIP_COMPONENT_FETCH}"
+
+openshell:
+  profiles:
+    - epic-creator/jira-profile.yaml
+
+providers:
+  - epic-creator/jira-provider.yaml
+  - vertex-ai
+
+security:
+  fail_mode: closed
