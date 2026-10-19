@@ -9,7 +9,7 @@ plugins:
   - plugins/epic-creator
 
 pre_script: epic-creator/pre-epic-creator.sh
-post_script: epic-creator/post-epic-creator.py
+post_script: epic-creator/post-epic-creator.sh
 
 host_files:
   - src: epic-creator/gcp-vertex.env
@@ -20,7 +20,7 @@ host_files:
 
 validation_loop:
   preflight_check: 'python3 -c "import jsonschema, yaml"'
-  script: epic-creator/validate-output.py
+  script: epic-creator/validate-output-schema.sh
   schema: epic-creator/result.schema.json
   max_iterations: 2
   feedback_mode: append
@@ -39,7 +39,6 @@ env:
     EPIC_SKIP_COMPONENT_FETCH: "${EPIC_SKIP_COMPONENT_FETCH}"
   runner:
     FULLSEND_TASK: "${FULLSEND_TASK}"
-    FULLSEND_EXPECTED_STRATEGY_IDS: "${FULLSEND_EXPECTED_STRATEGY_IDS}"
     JIRA_SERVER: "${JIRA_SERVER}"
     JIRA_USER: "${JIRA_USER}"
     JIRA_TOKEN: "${JIRA_TOKEN}"

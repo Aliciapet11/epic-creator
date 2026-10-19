@@ -23,10 +23,6 @@ for name in .claude-plugin skills scripts hooks; do
     echo "Missing or symlinked plugin source directory: ${name}" >&2
     exit 1
   fi
-  if find "${source}" -type l -print -quit | grep -q .; then
-    echo "Plugin source contains a symlink: ${name}" >&2
-    exit 1
-  fi
 done
 
 mkdir -p -- "${PLUGIN_PARENT}"

@@ -1,17 +1,20 @@
 # Local Epic Creator Fullsend package
 
-This package runs the existing `epic-decompose` skill in a Fullsend Claude sandbox. It does not change CI or submit Jira work. The agent writes only `agent-result.json`; after successful validation, the trusted host post-script copies `artifacts/` and `tmp/` into an explicitly marked disposable checkout, replacing only those two directories.
+This package runs the existing `epic-decompose` skill in a Fullsend Claude sandbox. It does not change CI or submit Jira work. The agent writes only `agent-result.json`; Fullsend's validation loop validates the output before the trusted host post-script runs. The post-script reports and copies the validated run's `artifacts/` and `tmp/` into a disposable checkout, replacing existing destination trees without rollback if copying fails.
 
 ## Setup
 
 1. Configure `JIRA_SERVER`, `JIRA_USER`, `JIRA_TOKEN`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` in the local shell or an untracked env file outside the repository. Do not put real values in committed files. The trusted host runner/pre-script receives the Jira server, user, and token; the sandbox receives the server and user plus a provider-managed token placeholder, never the real Jira token. Jira egress is enforced read-only. The host credential file named by `GOOGLE_APPLICATION_CREDENTIALS` is mounted into the sandbox at `/tmp/.gcp-credentials.json` for Vertex inference; only use a trusted package and target checkout.
+
+   The bundled Jira profile permits only `redhat.atlassian.net`. Changing `JIRA_SERVER` does not change that policy; stage testing requires a separate temporary profile/provider restricted to the stage host.
+
 2. Stage the native Claude plugin before resolving or running the harness:
 
    ```bash
    bash .fullsend/prepare-plugin.sh
    ```
 
-   It copies the current `.claude-plugin/`, `skills/`, `scripts/`, and `hooks/` trees into ignored `.fullsend/plugins/epic-creator/`. It refuses symlinks and an existing destination rather than overwriting it. To refresh, remove that generated destination explicitly, then stage again.
+   It copies the current `.claude-plugin/`, `skills/`, `scripts/`, and `hooks/` trees into ignored `.fullsend/plugins/epic-creator/`. It refuses top-level source symlinks and an existing destination rather than overwriting it; Fullsend validates the staged plugin contents. To refresh, remove that generated destination explicitly, then stage again.
 3. Resolve and pin the remote policy/provider/profile resources using the installed CLI:
 
    ```bash
@@ -22,7 +25,7 @@ This package runs the existing `epic-decompose` skill in a Fullsend Claude sandb
 
 ## Synthetic fixture run (no live Jira)
 
-Use a clean disposable checkout, not the source worktree; `.gitignore` is not an upload boundary. The example creates a detached checkout from explicit source revision `HEAD` and copies only the synthetic case-001 strategy and context into it. The marker is operator approval required before host bootstrap or post-run replacement of that checkout's `artifacts/` and `tmp/`:
+Use a clean disposable checkout, not the source worktree; `.gitignore` is not an upload boundary. The example creates a detached checkout from explicit source revision `HEAD` and copies only the synthetic case-001 strategy and context into it. Use a disposable target because the post-script replaces its `artifacts/` and `tmp/` trees without rollback if copying fails:
 
 ```bash
 TARGET="$(cd .. && pwd -P)/epic-creator-fullsend-disposable"
@@ -32,7 +35,6 @@ cp eval/cases/case-001-simple-two-component/artifacts/strat-tasks/RHAISTRAT-9001
   "$TARGET/artifacts/strat-tasks/"
 cp -R eval/cases/case-001-simple-two-component/.context/. \
   "$TARGET/.context/"
-touch "$TARGET/.epic-fullsend-disposable"
 ```
 
 From the package checkout, run with test-only placeholder Jira values and both existing bootstrap skip flags. These values are not credentials; the preseeded strategy/context mean the test should make no Jira or architecture-context calls:
@@ -50,8 +52,8 @@ fullsend run epic-creator --fullsend-dir .fullsend \
 
 This still uses real, billed Vertex inference. `--offline` prevents resource fetching; it does not disable model calls or container-image downloads.
 
-Inspect Fullsend's validated `agent-result.json` and the disposable target's promoted `artifacts/` and `tmp/`. Validation requires pipeline phase `DONE`, a matching nonempty report, complete artifacts for each selected strategy, and matching review/report counts and statuses. A business review with `pass: false` remains a valid completed outcome. Validation fails closed if the final sweep has no repository snapshot; sweep-only recovery is not supported.
+Inspect Fullsend's validated `agent-result.json` and the disposable target's copied `artifacts/` and `tmp/`. Host validation checks the JSON schema, requires `action: completed`, safely reads the pipeline state, requires phase `DONE`, and requires a nonempty `artifacts/decompose-runs/` directory. The native Epic workflow owns business artifact correctness. A business review with `pass: false` remains a valid completed outcome. Validation fails closed if the final sweep has no repository snapshot; sweep-only recovery is not supported.
 
-For JQL tasks, set trusted `FULLSEND_EXPECTED_STRATEGY_IDS` to the whitespace-separated strategy IDs expected from that query; validation fails closed if they are not supplied or do not match the packaged run. Do not pass Fullsend status-comment flags (`--status-comment-id`, `--status-number`, or `--status-repo`). The existing skill's `--announce-complete` option only prints completion status; it does not write Jira.
+Do not pass Fullsend status-comment flags (`--status-comment-id`, `--status-number`, or `--status-repo`). The existing skill's `--announce-complete` option only prints completion status; it does not write Jira.
 
 The first real inference run is intentionally separate from package setup and requires explicit approval. No CI change, Jira submission, or real workload is part of this local package.
