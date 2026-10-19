@@ -100,11 +100,13 @@ def test_package_config_registers_local_claude_agent_and_read_only_provider():
     assert config["agents"][0]["runtime"] == "claude"
     assert harness["providers"][0] == "epic-creator/jira-provider.yaml"
     assert harness["post_script"] == "epic-creator/post-epic-creator.py"
+    assert harness["model"] == "claude-opus-4-6"
     assert harness["env"]["runner"]["JIRA_TOKEN"] == "${JIRA_TOKEN}"
     assert harness["env"]["runner"]["FULLSEND_TASK"] == "${FULLSEND_TASK}"
     assert harness["env"]["runner"]["FULLSEND_EXPECTED_STRATEGY_IDS"] == "${FULLSEND_EXPECTED_STRATEGY_IDS}"
-    assert "JIRA_SERVER" not in harness["env"]["runner"]
-    assert "JIRA_USER" not in harness["env"]["runner"]
+    assert harness["env"]["runner"]["JIRA_SERVER"] == "${JIRA_SERVER}"
+    assert harness["env"]["runner"]["JIRA_USER"] == "${JIRA_USER}"
+    assert harness["env"]["sandbox"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "claude-opus-4-6"
     assert harness["providers"] == ["epic-creator/jira-provider.yaml", "vertex-ai"]
     assert harness["openshell"]["profiles"] == ["epic-creator/jira-profile.yaml"]
     profile = yaml.safe_load((FULLSEND / "epic-creator" / "jira-profile.yaml").read_text(encoding="utf-8"))

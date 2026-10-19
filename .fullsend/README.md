@@ -4,7 +4,7 @@ This package runs the existing `epic-decompose` skill in a Fullsend Claude sandb
 
 ## Setup
 
-1. Configure `JIRA_SERVER`, `JIRA_USER`, `JIRA_TOKEN`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` in the local shell or an untracked env file outside the repository. Do not put real values in committed files. Of the Jira credentials, the runner receives only `JIRA_TOKEN`; the sandbox receives Jira server/user values and a provider-managed token placeholder. Jira egress is enforced read-only. The host credential file named by `GOOGLE_APPLICATION_CREDENTIALS` is mounted into the sandbox at `/tmp/.gcp-credentials.json` for Vertex inference; only use a trusted package and target checkout.
+1. Configure `JIRA_SERVER`, `JIRA_USER`, `JIRA_TOKEN`, `ANTHROPIC_VERTEX_PROJECT_ID`, `CLOUD_ML_REGION`, `GOOGLE_CLOUD_PROJECT`, and `GOOGLE_APPLICATION_CREDENTIALS` in the local shell or an untracked env file outside the repository. Do not put real values in committed files. The trusted host runner/pre-script receives the Jira server, user, and token; the sandbox receives the server and user plus a provider-managed token placeholder, never the real Jira token. Jira egress is enforced read-only. The host credential file named by `GOOGLE_APPLICATION_CREDENTIALS` is mounted into the sandbox at `/tmp/.gcp-credentials.json` for Vertex inference; only use a trusted package and target checkout.
 2. Stage the native Claude plugin before resolving or running the harness:
 
    ```bash

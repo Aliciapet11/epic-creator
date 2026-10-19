@@ -4,8 +4,8 @@ generated_at: 2026-10-16T19:07:38.539145Z
 harnesses:
     epic-creator:
         source: harness/epic-creator.yaml
-        sha256: c673b654c554fb40aba6a3c0b59e4dac14da684e47812a16f7e894383ebb864d
-        resolved_at: 2026-10-16T21:16:06.795151Z
+        sha256: e9a68ec0f295ed343394b2696e4c3cce261edc9c8ee67aad1ae11bb569b25101
+        resolved_at: 2026-10-19T16:39:36.661832Z
         dependencies:
             - field: policy
               url: https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/policies/base.yaml
