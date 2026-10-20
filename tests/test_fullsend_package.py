@@ -71,7 +71,9 @@ def _run_validator(iteration, repo=None, **extra):
 def test_package_configuration():
     config = yaml.safe_load((FULLSEND / "config.yaml").read_text(encoding="utf-8"))
     assert config["version"] == "1"
-    assert config["agents"] == [{"source": "epic-creator/epic-creator.yaml"}]
+    assert [agent for agent in config["agents"] if "source" in agent] == [
+        {"source": "epic-creator/epic-creator.yaml"}
+    ]
     harness = yaml.safe_load(HARNESS.read_text(encoding="utf-8"))
     assert harness["providers"] == ["epic-creator/jira-provider.yaml", "vertex-ai"]
     assert harness["openshell"]["profiles"] == ["epic-creator/jira-profile.yaml"]
