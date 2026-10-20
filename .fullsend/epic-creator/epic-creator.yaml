@@ -1,12 +1,14 @@
+---
 agent: epic-creator/prompt.md
-role: fullsend
+# Keep claude-opus-4-6: the harness was tested with it for the skill and its
+# subagents. Evaluate replacements on this pipeline, changing both this line
+# and CLAUDE_CODE_SUBAGENT_MODEL below together.
 model: claude-opus-4-6
 effort: high
 image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:259605fea321353552fdefd3a6a55e8b5c260998dfc5a622ed143e41a429995a
 policy: https://raw.githubusercontent.com/fullsend-ai/agents/11dd3ad15ab5033fd04661d7faf6f7af45548d2f/policies/base.yaml#sha256=3ed634401d87a1327fffe5e266272d930321484ce8a91dfa5fe447d4f2e00470
-
-plugins:
-  - plugins/epic-creator
+role: epic-creator
+slug: fullsend-ai-epic-creator
 
 pre_script: epic-creator/pre-epic-creator.sh
 post_script: epic-creator/post-epic-creator.sh

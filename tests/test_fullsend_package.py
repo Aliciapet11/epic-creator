@@ -75,6 +75,10 @@ def test_package_configuration():
         {"source": "epic-creator/epic-creator.yaml"}
     ]
     harness = yaml.safe_load(HARNESS.read_text(encoding="utf-8"))
+    assert harness["role"] == "epic-creator"
+    assert harness["slug"] == "fullsend-ai-epic-creator"
+    assert "plugins" not in harness
+    assert not (FULLSEND / "prepare-plugin.sh").exists()
     assert harness["providers"] == ["epic-creator/jira-provider.yaml", "vertex-ai"]
     assert harness["openshell"]["profiles"] == ["epic-creator/jira-profile.yaml"]
     assert harness["validation_loop"]["script"] == "epic-creator/validate-output-schema.sh"
@@ -107,10 +111,16 @@ def test_package_configuration():
     assert "JIRA_TOKEN" in provider["credentials"]
 
 
+def test_package_documentation_layout():
+    landing = (FULLSEND / "README.md").read_text(encoding="utf-8")
+    assert "[agent README](epic-creator/README.md)" in landing
+    assert (FULLSEND / "epic-creator" / "README.md").is_file()
+
+
 def test_native_skill_prompt_contract():
     prompt = (FULLSEND / "epic-creator" / "prompt.md").read_text(encoding="utf-8")
     for phrase in (
-        "call the `Skill` tool for `epic-creator:epic-decompose`",
+        "call the `Skill` tool for `epic-decompose`",
         "passing only the parsed arguments after the command token",
         "only if the tool actually reports the skill unavailable",
         "resume the existing dispatcher in place",
@@ -293,64 +303,130 @@ def test_pre_runs_only_target_bootstrap_scripts(tmp_path):
     assert missing.returncode != 0
 
 
-def _plugin_checkout(path):
-    checkout = path / "checkout"
-    (checkout / ".fullsend").mkdir(parents=True)
-    shutil.copy2(FULLSEND / "prepare-plugin.sh", checkout / ".fullsend")
-    files = {
-        ".claude-plugin/plugin.json": "{}\n",
-        "skills/example/SKILL.md": "synthetic skill\n",
-        "scripts/example.sh": "#!/usr/bin/env bash\n",
-        "hooks/hook.json": "{}\n",
-    }
-    for relative, content in files.items():
-        source = checkout / relative
-        source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_text(content, encoding="utf-8")
-    (checkout / "private.env").write_text("private sentinel\n", encoding="utf-8")
-    return checkout, files
+def test_repository_skill_layout():
+    repo = ROOT.resolve()
+    assert not (ROOT / "skills").is_symlink()
+    skill_root = (ROOT / ".agents/skills").resolve()
+    assert repo in skill_root.parents
+    assert (ROOT / "skills").resolve() == skill_root
+    assert (ROOT / ".claude/skills").resolve() == skill_root
+
+    skill = skill_root / "epic-decompose"
+    compatibility = ROOT / "skills/epic-decompose"
+    for relative in (
+        "SKILL.md",
+        "prompts/fetch-agent.md",
+        "prompts/decompose-agent.md",
+        "prompts/review-agent.md",
+        "prompts/revise-agent.md",
+    ):
+        assert (skill / relative).is_file()
+        assert (compatibility / relative).read_bytes() == (skill / relative).read_bytes()
 
 
-def _run_plugin_stager(checkout, tmp_path):
+def _compact_hook_commands(path):
+    config = json.loads(path.read_text())
+    entries = config["hooks"]["SessionStart"]
+    matches = [entry for entry in entries if entry.get("matcher") == "compact"]
+    assert len(matches) == 1
+    return [
+        hook["command"]
+        for hook in matches[0]["hooks"]
+        if hook.get("type") == "command"
+    ]
+
+
+def test_plugin_manifest_and_compact_hooks():
+    manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+    assert manifest["name"] == "epic-creator"
+    assert "skills" not in manifest
+
+    plugin_commands = _compact_hook_commands(ROOT / "hooks/hooks.json")
+    assert plugin_commands == [
+        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py post-compact-hook"
+    ]
+
+    project_commands = _compact_hook_commands(ROOT / ".claude/settings.json")
+    assert len(project_commands) == 1
+    command = project_commands[0]
+    assert 'if [ "${FULLSEND_ROLE:-}" = "epic-creator" ]' in command
+    assert 'cd "${CLAUDE_PROJECT_DIR:?}"' in command
+    assert "python3 scripts/pipeline_state.py post-compact-hook" in command
+
+
+def _hook_checkout(tmp_path, phase="DECOMPOSE"):
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts/pipeline_state.py", scripts / "pipeline_state.py")
+    if phase is not None:
+        state = checkout / "tmp/pipeline-state.yaml"
+        state.parent.mkdir()
+        state.write_text(f"phase: {phase}\n")
+    return checkout
+
+
+def _run_hook(command, cwd, tmp_path, **extra_env):
     return subprocess.run(
-        ["bash", str(checkout / ".fullsend" / "prepare-plugin.sh")],
-        cwd=checkout, env=_environment(tmp_path),
-        capture_output=True, text=True, timeout=10,
+        ["bash", "-c", command],
+        cwd=cwd,
+        env=_environment(tmp_path, **extra_env),
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
 
 
-def test_plugin_staging_copies_only_selected_trees(tmp_path):
-    checkout, files = _plugin_checkout(tmp_path)
-    result = _run_plugin_stager(checkout, tmp_path)
-    assert result.returncode == 0, result.stderr + result.stdout
-    destination = checkout / ".fullsend" / "plugins" / "epic-creator"
-    for relative, content in files.items():
-        assert (destination / relative).read_text(encoding="utf-8") == content
-    assert not (destination / "private.env").exists()
+@pytest.mark.parametrize(
+    ("phase", "enabled", "nested", "expected"),
+    [
+        ("DECOMPOSE", "1", False, "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"),
+        ("DECOMPOSE", "1", True, "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"),
+        ("DONE", "1", False, "[PIPELINE STATE RECOVERY] Pipeline complete"),
+        ("DECOMPOSE", "", False, ""),
+        (None, "1", False, ""),
+    ],
+)
+def test_project_compact_hook_recovery(tmp_path, phase, enabled, nested, expected):
+    checkout = _hook_checkout(tmp_path, phase)
+    cwd = checkout / "nested" if nested else checkout
+    if nested:
+        cwd.mkdir()
+    command = _compact_hook_commands(ROOT / ".claude/settings.json")[0]
+    result = _run_hook(
+        command,
+        cwd,
+        tmp_path,
+        EPIC_CREATOR_ENABLE_CONTEXT_HOOK=enabled,
+        FULLSEND_ROLE="epic-creator",
+        CLAUDE_PROJECT_DIR=str(checkout),
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    if expected:
+        assert expected in result.stdout
+    else:
+        assert result.stdout == ""
 
 
-def test_plugin_staging_rejects_top_level_source_symlink(tmp_path):
-    checkout, _ = _plugin_checkout(tmp_path)
-    skills = checkout / "skills"
-    shutil.rmtree(skills)
-    outside = tmp_path / "external-skills"
-    outside.mkdir()
-    (outside / "SKILL.md").write_text("external\n", encoding="utf-8")
-    skills.symlink_to(outside, target_is_directory=True)
-    assert _run_plugin_stager(checkout, tmp_path).returncode != 0
-    assert not (checkout / ".fullsend" / "plugins" / "epic-creator").exists()
+def test_project_hook_does_not_duplicate_plugin_hook(tmp_path):
+    checkout = _hook_checkout(tmp_path)
+    project_command = _compact_hook_commands(ROOT / ".claude/settings.json")[0]
+    plugin_command = _compact_hook_commands(ROOT / "hooks/hooks.json")[0]
+    env = {
+        "EPIC_CREATOR_ENABLE_CONTEXT_HOOK": "1",
+        "CLAUDE_PROJECT_DIR": str(checkout),
+        "CLAUDE_PLUGIN_ROOT": str(checkout),
+    }
 
+    project_result = _run_hook(project_command, checkout, tmp_path, **env)
+    assert project_result.returncode == 0, project_result.stderr
+    assert project_result.stderr == ""
+    assert project_result.stdout == ""
 
-def test_plugin_staging_rejects_existing_destination(tmp_path):
-    checkout, _ = _plugin_checkout(tmp_path)
-    (checkout / ".fullsend" / "plugins" / "epic-creator").mkdir(parents=True)
-    assert _run_plugin_stager(checkout, tmp_path).returncode != 0
-
-
-def test_plugin_staging_rejects_symlinked_destination_parent(tmp_path):
-    checkout, _ = _plugin_checkout(tmp_path)
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    (checkout / ".fullsend" / "plugins").symlink_to(outside, target_is_directory=True)
-    assert _run_plugin_stager(checkout, tmp_path).returncode != 0
-    assert list(outside.iterdir()) == []
+    plugin_result = _run_hook(plugin_command, checkout, tmp_path, **env)
+    assert plugin_result.returncode == 0, plugin_result.stderr
+    assert plugin_result.stderr == ""
+    assert plugin_result.stdout.count(
+        "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"
+    ) == 1
