@@ -15,6 +15,8 @@ SCHEMA = FULLSEND / "epic-creator" / "result.schema.json"
 VALIDATOR = FULLSEND / "epic-creator" / "validate-output-schema.sh"
 PRE = FULLSEND / "epic-creator" / "pre-epic-creator.sh"
 POST = FULLSEND / "epic-creator" / "post-epic-creator.sh"
+RUN_START = "2026-10-20T00:00:00Z"
+RUN_REPORT = Path(f"artifacts/decompose-runs/{RUN_START.replace(':', '-')}.yaml")
 
 
 def _environment(tmp_path, **extra):
@@ -43,12 +45,12 @@ def _fixture(iteration, *, phase="DONE", report=True):
     repo = iteration.parent / "source-repo"
     (repo / "tmp").mkdir(parents=True)
     (repo / "tmp" / "pipeline-state.yaml").write_text(
-        f"phase: {phase}\n", encoding="utf-8"
+        yaml.safe_dump({"phase": phase, "start_time": RUN_START}), encoding="utf-8"
     )
     runs = repo / "artifacts" / "decompose-runs"
     runs.mkdir(parents=True)
     if report:
-        (runs / "report.yaml").write_text(
+        (repo / RUN_REPORT).write_text(
             "review:\n  pass: false\n", encoding="utf-8"
         )
     return output, repo
@@ -89,6 +91,9 @@ def test_package_configuration():
         assert harness["env"]["runner"][key] == "${" + key + "}"
     assert "FULLSEND_EXPECTED_STRATEGY_IDS" not in harness["env"]["runner"]
     assert harness["env"]["sandbox"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "claude-opus-4-6"
+    for key in ("EPIC_SKIP_BOOTSTRAP", "EPIC_SKIP_COMPONENT_FETCH"):
+        assert harness["env"]["sandbox"][key] == "1"
+        assert harness["env"]["runner"][key] == "${" + key + "}"
 
     profile = yaml.safe_load(
         (FULLSEND / harness["openshell"]["profiles"][0]).read_text(encoding="utf-8")
@@ -124,12 +129,18 @@ def test_native_skill_prompt_contract():
         "passing only the parsed arguments after the command token",
         "only if the tool actually reports the skill unavailable",
         "resume the existing dispatcher in place",
+        "without calling the `Skill` tool",
+        "If the phase is `INIT`",
+        "without running `init` or overwriting existing ID or batch files",
+        "Otherwise skip setup, bootstrap, and rebatching",
+        "Start with `python3 scripts/pipeline_state.py next-action`",
         "its explicit `subagent_type` if present, otherwise `general-purpose`",
         "never use the `epic-creator` Fullsend wrapper as a phase worker",
         "write only `FULLSEND_OUTPUT_DIR/agent-result.json`",
         "Do not copy `artifacts/` or `tmp/`",
     ):
         assert phrase in prompt
+    assert prompt.index("resume the existing dispatcher") < prompt.index("for a new run")
 
 
 def test_validator_accepts_completed_run_with_failed_business_review(tmp_path):
@@ -139,6 +150,73 @@ def test_validator_accepts_completed_run_with_failed_business_review(tmp_path):
     assert result.returncode == 0, result.stderr + result.stdout
     assert "PASS: pipeline phase DONE" in result.stdout
     assert sorted(path.name for path in output.iterdir()) == ["agent-result.json"]
+
+
+@pytest.mark.parametrize("case", ["older-report", "dotfile", "empty-current-report"])
+def test_validator_requires_nonempty_current_run_report(tmp_path, case):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration, report=False)
+    runs = repo / "artifacts/decompose-runs"
+    if case == "older-report":
+        (runs / "2026-10-19T00-00-00Z.yaml").write_text("previous run\n")
+    elif case == "dotfile":
+        (runs / ".placeholder").write_text("not a report\n")
+    else:
+        (repo / RUN_REPORT).touch()
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+    assert "current run report" in result.stdout
+
+
+@pytest.mark.parametrize("start_time", [
+    None, "", "not-a-timestamp", "../../outside", 42,
+    "2026-02-30T00:00:00Z", "2026-10-20T00:00:00+00:00",
+    "0000-01-01T00:00:00Z", "2100-02-29T00:00:00Z",
+    "2026-04-31T00:00:00Z", "2026-10-20T24:00:00Z",
+    "2026-10-20T00:60:00Z", "2026-10-20T00:00:60Z",
+])
+def test_validator_rejects_missing_or_invalid_run_start(tmp_path, start_time):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration)
+    state = {"phase": "DONE"}
+    if start_time is not None:
+        state["start_time"] = start_time
+    (repo / "tmp/pipeline-state.yaml").write_text(yaml.safe_dump(state))
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+    assert "start_time" in result.stdout
+
+
+@pytest.mark.parametrize("start_time", ["2000-02-29T00:00:00Z", "2024-02-29T23:59:59Z"])
+@pytest.mark.parametrize("quote", ["'", '"', ""])
+def test_validator_accepts_utc_report_timestamp(tmp_path, start_time, quote):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration)
+    (repo / "tmp/pipeline-state.yaml").write_text(
+        f"phase: DONE\nstart_time: {quote}{start_time}{quote}\n"
+    )
+    (repo / RUN_REPORT).rename(
+        repo / "artifacts/decompose-runs" / f"{start_time.replace(':', '-')}.yaml"
+    )
+    result = _run_validator(iteration, repo)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+@pytest.mark.parametrize("value", [f"'{RUN_START}", f'{RUN_START}"', f"'{RUN_START}\""])
+def test_validator_rejects_unpaired_timestamp_quotes(tmp_path, value):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration)
+    (repo / "tmp/pipeline-state.yaml").write_text(f"phase: DONE\nstart_time: {value}\n")
+    assert _run_validator(iteration, repo).returncode != 0
+
+
+def test_validator_rejects_duplicate_run_start(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration)
+    (repo / "tmp/pipeline-state.yaml").write_text(
+        f"phase: DONE\nstart_time: '{RUN_START}'\nstart_time: '{RUN_START}'\n"
+    )
+    assert _run_validator(iteration, repo).returncode != 0
 
 
 @pytest.mark.parametrize("case", [
@@ -247,7 +325,7 @@ def test_post_copies_validated_repository_trees_to_disposable_target(tmp_path):
     target = _disposable_target(tmp_path / "disposable")
     result = _post(iteration, output, repo, target)
     assert result.returncode == 0, result.stderr + result.stdout
-    report = Path("artifacts/decompose-runs/report.yaml")
+    report = RUN_REPORT
     state = Path("tmp/pipeline-state.yaml")
     for relative in (report, state):
         assert (target / relative).read_bytes() == (repo / relative).read_bytes()
@@ -275,7 +353,54 @@ def test_post_copy_failure_propagates_without_claiming_rollback(tmp_path):
     )
     assert result.returncode != 0
     assert (target / "keep.txt").read_text(encoding="utf-8") == "preserve\n"
-    assert (repo / "artifacts" / "decompose-runs" / "report.yaml").is_file()
+    assert (repo / RUN_REPORT).is_file()
+
+
+def test_post_removal_failure_stops_copyback(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    output, repo = _fixture(iteration)
+    target = _disposable_target(tmp_path / "target")
+    result = subprocess.run(
+        ["bash", "-c", 'rm() { return 1; }; source "$1"', "_", str(POST)],
+        cwd=iteration,
+        env=_environment(
+            tmp_path, FULLSEND_VALIDATED_ITERATION_DIR=output,
+            REPO_DIR=repo, TARGET_REPO_DIR=target,
+        ),
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert (target / "tmp/old.txt").read_text() == "replace\n"
+    assert (target / "artifacts/old.txt").read_text() == "replace\n"
+    assert not (target / RUN_REPORT).exists()
+
+
+@pytest.mark.parametrize("variable", [
+    "TARGET_REPO_DIR", "FULLSEND_VALIDATED_ITERATION_DIR", "REPO_DIR",
+])
+@pytest.mark.parametrize("empty", [False, True])
+def test_post_rejects_missing_or_empty_required_paths(tmp_path, variable, empty):
+    iteration = tmp_path / "iteration-1"
+    output, repo = _fixture(iteration)
+    target = _disposable_target(tmp_path / "target")
+    env = _environment(
+        tmp_path, FULLSEND_VALIDATED_ITERATION_DIR=output,
+        REPO_DIR=repo, TARGET_REPO_DIR=target,
+    )
+    if empty:
+        env[variable] = ""
+    else:
+        env.pop(variable)
+    result = subprocess.run(
+        ["bash", "-c", 'rm() { echo DELETE_CALLED >&2; return 99; }; source "$1"',
+         "_", str(POST)],
+        cwd=iteration, env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert f"{variable} is required" in result.stderr
+    assert "DELETE_CALLED" not in result.stderr
+    assert (target / "tmp/old.txt").is_file()
+    assert (target / "artifacts/old.txt").is_file()
 
 
 def test_pre_runs_only_target_bootstrap_scripts(tmp_path):
@@ -375,6 +500,44 @@ def _run_hook(command, cwd, tmp_path, **extra_env):
         text=True,
         timeout=10,
     )
+
+
+@pytest.mark.parametrize("phase", ["DECOMPOSE", "INIT"])
+def test_dispatch_resume_preserves_run_and_existing_batches(tmp_path, phase):
+    checkout = _hook_checkout(tmp_path)
+    for name in ("check_decompose_progress.py", "artifact_utils.py"):
+        shutil.copy2(ROOT / "scripts" / name, checkout / "scripts" / name)
+    state_path = checkout / "tmp/pipeline-state.yaml"
+    state = {
+        "phase": phase, "start_time": RUN_START, "batch_size": 25,
+        "batch": 0 if phase == "INIT" else 1,
+        "total_batches": 0 if phase == "INIT" else 1, "headless": True,
+    }
+    state_path.write_text(yaml.safe_dump(state))
+    ids = "RHAISTRAT-1234\n"
+    paths = [checkout / "tmp" / name for name in (
+        "pipeline-all-ids.txt", "pipeline-batch-1-ids.txt", "pipeline-active-ids.txt",
+    )]
+    for path in paths:
+        path.write_text(ids)
+    commands = []
+    if phase == "INIT":
+        commands.extend([["set", "total_batches=1"], ["set-phase", "BATCH_START"]])
+    commands.append(["next-action"])
+    for arguments in commands:
+        result = subprocess.run(
+            ["python3", "scripts/pipeline_state.py", *arguments], cwd=checkout,
+            env=_environment(tmp_path), capture_output=True, text=True, timeout=10,
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+    action = yaml.safe_load(result.stdout)
+    assert action["action"] == "launch_wave"
+    assert action["phase"] == ("FETCH" if phase == "INIT" else phase)
+    after = yaml.safe_load(state_path.read_text())
+    for key in ("start_time", "batch_size", "headless"):
+        assert after[key] == state[key]
+    for path in paths:
+        assert path.read_text() == ids
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,10 @@
 # post-epic-creator.sh — Report agent-result.json after the sandbox exits.
 set -euo pipefail
 
+: "${TARGET_REPO_DIR:?TARGET_REPO_DIR is required}"
+: "${FULLSEND_VALIDATED_ITERATION_DIR:?FULLSEND_VALIDATED_ITERATION_DIR is required}"
+: "${REPO_DIR:?REPO_DIR is required}"
+
 RESULT_FILE="${FULLSEND_VALIDATED_ITERATION_DIR}/agent-result.json"
 
 if [[ ! -f "${RESULT_FILE}" ]]; then
@@ -16,17 +20,14 @@ SUMMARY=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("
 echo "Result: action=${ACTION} pipeline=${PIPELINE}"
 echo "Summary: ${SUMMARY}"
 
-if [[ -z "${REPO_DIR:-}" ]]; then
-  echo "ERROR: downloaded repository is unavailable"
-  exit 1
-fi
-
 if [[ -d "${REPO_DIR}/tmp" ]]; then
-  rm -rf "${TARGET_REPO_DIR}/tmp" && cp -R -p "${REPO_DIR}/tmp" "${TARGET_REPO_DIR}/"
+  rm -rf "${TARGET_REPO_DIR}/tmp"
+  cp -R -p "${REPO_DIR}/tmp" "${TARGET_REPO_DIR}/"
 fi
 
 if [[ -d "${REPO_DIR}/artifacts" ]]; then
-  rm -rf "${TARGET_REPO_DIR}/artifacts" && cp -R -p "${REPO_DIR}/artifacts" "${TARGET_REPO_DIR}/"
+  rm -rf "${TARGET_REPO_DIR}/artifacts"
+  cp -R -p "${REPO_DIR}/artifacts" "${TARGET_REPO_DIR}/"
 fi
 
 case "${ACTION}" in

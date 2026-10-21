@@ -111,11 +111,32 @@ if [[ "${PHASE}" != "DONE" ]]; then
 fi
 
 RUNS_DIR="${TARGET_REPO_DIR}/artifacts/decompose-runs"
-if [[ -z "$(ls -A "${RUNS_DIR}" 2>/dev/null)" ]]; then
-  echo "FAIL: phase DONE but ${RUNS_DIR} is empty"
+START_TIME_COUNT=$(awk '/^start_time:/ { count++ } END { print count + 0 }' "${STATE}")
+START_TIME=$(awk '/^start_time:/ { sub(/^start_time:[[:space:]]*/, ""); print }' "${STATE}")
+if [[ "${START_TIME}" == \"*\" || "${START_TIME}" == \'*\' ]]; then
+  START_TIME="${START_TIME:1:${#START_TIME}-2}"
+fi
+
+if [[ "${START_TIME_COUNT}" != "1" ]] || ! python3 -c '
+import sys
+from datetime import datetime
+fmt = "%Y-%m-%dT%H:%M:%SZ"
+if datetime.strptime(sys.argv[1], fmt).strftime(fmt) != sys.argv[1]:
+    sys.exit(1)
+' "${START_TIME}" 2>/dev/null; then
+  echo "FAIL: pipeline state has a missing or invalid canonical UTC start_time"
   echo "FAIL: previous run summary: ${SUMMARY}"
   echo "FAIL: previous run errors: ${ERRORS}"
   exit 1
 fi
 
-echo "PASS: pipeline phase DONE, run report present"
+REPORT_NAME="${START_TIME//:/-}.yaml"
+REPORT_PATH="${RUNS_DIR}/${REPORT_NAME}"
+if [[ ! -f "${REPORT_PATH}" || -L "${REPORT_PATH}" || ! -s "${REPORT_PATH}" ]]; then
+  echo "FAIL: current run report is missing, empty, or not a regular file: ${REPORT_PATH}"
+  echo "FAIL: previous run summary: ${SUMMARY}"
+  echo "FAIL: previous run errors: ${ERRORS}"
+  exit 1
+fi
+
+echo "PASS: pipeline phase DONE, current run report present"

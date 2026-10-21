@@ -1,8 +1,7 @@
 ---
 agent: epic-creator/prompt.md
-# Keep claude-opus-4-6: the harness was tested with it for the skill and its
-# subagents. Evaluate replacements on this pipeline, changing both this line
-# and CLAUDE_CODE_SUBAGENT_MODEL below together.
+# Model pin inherited from RFE Creator; not yet evaluated for Epic Creator.
+# Keep this and CLAUDE_CODE_SUBAGENT_MODEL below aligned.
 model: claude-opus-4-6
 effort: high
 image: ghcr.io/fullsend-ai/fullsend-sandbox@sha256:259605fea321353552fdefd3a6a55e8b5c260998dfc5a622ed143e41a429995a
@@ -37,8 +36,8 @@ env:
     CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-4-6"
     CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "20"
     EPIC_CREATOR_ENABLE_CONTEXT_HOOK: "1"
-    EPIC_SKIP_BOOTSTRAP: "${EPIC_SKIP_BOOTSTRAP}"
-    EPIC_SKIP_COMPONENT_FETCH: "${EPIC_SKIP_COMPONENT_FETCH}"
+    EPIC_SKIP_BOOTSTRAP: "1"
+    EPIC_SKIP_COMPONENT_FETCH: "1"
   runner:
     FULLSEND_TASK: "${FULLSEND_TASK}"
     JIRA_SERVER: "${JIRA_SERVER}"
