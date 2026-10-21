@@ -93,7 +93,6 @@ def test_package_configuration():
     assert harness["env"]["sandbox"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "claude-opus-4-6"
     for key in ("EPIC_SKIP_BOOTSTRAP", "EPIC_SKIP_COMPONENT_FETCH"):
         assert harness["env"]["sandbox"][key] == "1"
-        assert harness["env"]["runner"][key] == "${" + key + "}"
 
     profile = yaml.safe_load(
         (FULLSEND / harness["openshell"]["profiles"][0]).read_text(encoding="utf-8")
@@ -126,7 +125,6 @@ def test_native_skill_prompt_contract():
     prompt = (FULLSEND / "epic-creator" / "prompt.md").read_text(encoding="utf-8")
     for phrase in (
         "call the `Skill` tool for `epic-decompose`",
-        "passing only the parsed arguments after the command token",
         "only if the tool actually reports the skill unavailable",
         "resume the existing dispatcher in place",
         "without calling the `Skill` tool",

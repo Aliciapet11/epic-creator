@@ -25,16 +25,17 @@ Install Git and curl for the bootstrap scripts.
 Create an environment file outside the repository and pass it to Fullsend with `--env-file`. Replace the example issue key with the strategy to decompose. Keep this file and the GCP JSON key out of version control.
 
 ```env
+# Required inference variables
 ANTHROPIC_VERTEX_PROJECT_ID=<your-gcp-project>
 GOOGLE_CLOUD_PROJECT=<your-gcp-project>
 CLOUD_ML_REGION=global
 GOOGLE_APPLICATION_CREDENTIALS=<absolute-path-to-gcp-json-key>
-FULLSEND_TASK="/epic-creator:epic-decompose RHAISTRAT-1234 --headless"
+
+# Required variables
+FULLSEND_TASK="/epic-decompose RHAISTRAT-1234"
 JIRA_SERVER=https://redhat.atlassian.net
 JIRA_USER="<email@example.com>"
 JIRA_TOKEN="<token>"
-EPIC_SKIP_BOOTSTRAP=
-EPIC_SKIP_COMPONENT_FETCH=
 ```
 
 Fullsend mounts the GCP key into the sandbox; use only a trusted package and target checkout.
@@ -45,7 +46,7 @@ Run from the repository root. Copyback replaces `artifacts/` and `tmp/` without 
 
 ```bash
 fullsend run epic-creator --fullsend-dir .fullsend \
-  --target-repo . \
+  --target-repo "$(pwd -P)" \
   --env-file /absolute/path/to/epic-creator.env
 ```
 
