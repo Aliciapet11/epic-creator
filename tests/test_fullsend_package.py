@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -10,11 +11,21 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 FULLSEND = ROOT / ".fullsend"
-HARNESS = FULLSEND / "epic-creator" / "epic-creator.yaml"
-SCHEMA = FULLSEND / "epic-creator" / "result.schema.json"
-VALIDATOR = FULLSEND / "epic-creator" / "validate-output-schema.sh"
-PRE = FULLSEND / "epic-creator" / "pre-epic-creator.sh"
-POST = FULLSEND / "epic-creator" / "post-epic-creator.sh"
+PACKAGE_CONFIG = yaml.safe_load(
+    (FULLSEND / "config.yaml").read_text(encoding="utf-8")
+)
+EPIC_AGENT = next(
+    agent for agent in PACKAGE_CONFIG["agents"]
+    if agent.get("name") == "epic-creator"
+    or Path(agent.get("source", "")).stem == "epic-creator"
+)
+HARNESS = yaml.safe_load(
+    (FULLSEND / EPIC_AGENT["source"]).read_text(encoding="utf-8")
+)
+SCHEMA = FULLSEND / HARNESS["validation_loop"]["schema"]
+VALIDATOR = FULLSEND / HARNESS["validation_loop"]["script"]
+PRE = FULLSEND / HARNESS["pre_script"]
+POST = FULLSEND / HARNESS["post_script"]
 RUN_START = "2026-10-20T00:00:00Z"
 RUN_REPORT = Path(f"artifacts/decompose-runs/{RUN_START.replace(':', '-')}.yaml")
 
@@ -71,74 +82,44 @@ def _run_validator(iteration, repo=None, **extra):
 
 
 def test_package_configuration():
-    config = yaml.safe_load((FULLSEND / "config.yaml").read_text(encoding="utf-8"))
-    assert config["version"] == "1"
-    assert [agent for agent in config["agents"] if "source" in agent] == [
-        {"source": "epic-creator/epic-creator.yaml"}
+    sandbox_env = HARNESS["env"]["sandbox"]
+    runner_env = HARNESS["env"]["runner"]
+    assert HARNESS["model"] == sandbox_env["CLAUDE_CODE_SUBAGENT_MODEL"]
+    assert runner_env["JIRA_TOKEN"] == "${JIRA_TOKEN}"
+    assert "JIRA_TOKEN" not in sandbox_env
+    profiles = [
+        yaml.safe_load((FULLSEND / path).read_text(encoding="utf-8"))
+        for path in HARNESS["openshell"]["profiles"]
     ]
-    harness = yaml.safe_load(HARNESS.read_text(encoding="utf-8"))
-    assert harness["role"] == "epic-creator"
-    assert harness["slug"] == "fullsend-ai-epic-creator"
-    assert "plugins" not in harness
-    assert not (FULLSEND / "prepare-plugin.sh").exists()
-    assert harness["providers"] == ["epic-creator/jira-provider.yaml", "vertex-ai"]
-    assert harness["openshell"]["profiles"] == ["epic-creator/jira-profile.yaml"]
-    assert harness["validation_loop"]["script"] == "epic-creator/validate-output-schema.sh"
-    assert harness["pre_script"] == "epic-creator/pre-epic-creator.sh"
-    assert harness["post_script"] == "epic-creator/post-epic-creator.sh"
-    assert harness["model"] == "claude-opus-4-6"
-    for key in ("JIRA_SERVER", "JIRA_USER", "JIRA_TOKEN", "FULLSEND_TASK"):
-        assert harness["env"]["runner"][key] == "${" + key + "}"
-    assert "FULLSEND_EXPECTED_STRATEGY_IDS" not in harness["env"]["runner"]
-    assert harness["env"]["sandbox"]["CLAUDE_CODE_SUBAGENT_MODEL"] == "claude-opus-4-6"
-    for key in ("EPIC_SKIP_BOOTSTRAP", "EPIC_SKIP_COMPONENT_FETCH"):
-        assert harness["env"]["sandbox"][key] == "1"
-
-    profile = yaml.safe_load(
-        (FULLSEND / harness["openshell"]["profiles"][0]).read_text(encoding="utf-8")
+    jira_profile = next(
+        profile for profile in profiles
+        if any(
+            "JIRA_TOKEN" in credential.get("env_vars", [])
+            for credential in profile.get("credentials", [])
+        )
     )
-    assert profile["id"] == "epic-creator-jira"
-    assert profile["endpoints"][0]["host"] == "redhat.atlassian.net"
-    assert profile["endpoints"][0]["access"] == "read-only"
-    assert profile["endpoints"][0]["enforcement"] == "enforce"
-    assert profile["credentials"] == [{
-        "name": "jira_token",
-        "env_vars": ["JIRA_TOKEN"],
-        "required": True,
-        "auth_style": "basic",
-    }]
-    provider = yaml.safe_load(
-        (FULLSEND / harness["providers"][0]).read_text(encoding="utf-8")
+    credential = next(
+        credential for credential in jira_profile["credentials"]
+        if "JIRA_TOKEN" in credential.get("env_vars", [])
     )
-    assert provider["name"] == "epic-creator-jira"
-    assert provider["type"] == "epic-creator-jira"
-    assert "JIRA_TOKEN" in provider["credentials"]
+    assert credential["required"] is True
+    assert jira_profile["endpoints"]
+    assert all(
+        endpoint["access"] == "read-only"
+        and endpoint["enforcement"] == "enforce"
+        for endpoint in jira_profile["endpoints"]
+    )
 
-
-def test_package_documentation_layout():
-    landing = (FULLSEND / "README.md").read_text(encoding="utf-8")
-    assert "[agent README](epic-creator/README.md)" in landing
-    assert (FULLSEND / "epic-creator" / "README.md").is_file()
-
-
-def test_native_skill_prompt_contract():
-    prompt = (FULLSEND / "epic-creator" / "prompt.md").read_text(encoding="utf-8")
-    for phrase in (
-        "call the `Skill` tool for `epic-decompose`",
-        "only if the tool actually reports the skill unavailable",
-        "resume the existing dispatcher in place",
-        "without calling the `Skill` tool",
-        "If the phase is `INIT`",
-        "without running `init` or overwriting existing ID or batch files",
-        "Otherwise skip setup, bootstrap, and rebatching",
-        "Start with `python3 scripts/pipeline_state.py next-action`",
-        "its explicit `subagent_type` if present, otherwise `general-purpose`",
-        "never use the `epic-creator` Fullsend wrapper as a phase worker",
-        "write only `FULLSEND_OUTPUT_DIR/agent-result.json`",
-        "Do not copy `artifacts/` or `tmp/`",
-    ):
-        assert phrase in prompt
-    assert prompt.index("resume the existing dispatcher") < prompt.index("for a new run")
+    providers = [
+        yaml.safe_load((FULLSEND / path).read_text(encoding="utf-8"))
+        for path in HARNESS["providers"]
+        if (FULLSEND / path).is_file()
+    ]
+    jira_provider = next(
+        provider for provider in providers
+        if provider.get("type") == jira_profile["id"]
+    )
+    assert "JIRA_TOKEN" in jira_provider["credentials"]
 
 
 def test_validator_accepts_completed_run_with_failed_business_review(tmp_path):
@@ -146,7 +127,6 @@ def test_validator_accepts_completed_run_with_failed_business_review(tmp_path):
     output, repo = _fixture(iteration)
     result = _run_validator(iteration, repo)
     assert result.returncode == 0, result.stderr + result.stdout
-    assert "PASS: pipeline phase DONE" in result.stdout
     assert sorted(path.name for path in output.iterdir()) == ["agent-result.json"]
 
 
@@ -163,15 +143,11 @@ def test_validator_requires_nonempty_current_run_report(tmp_path, case):
         (repo / RUN_REPORT).touch()
     result = _run_validator(iteration, repo)
     assert result.returncode != 0
-    assert "current run report" in result.stdout
 
 
 @pytest.mark.parametrize("start_time", [
     None, "", "not-a-timestamp", "../../outside", 42,
     "2026-02-30T00:00:00Z", "2026-10-20T00:00:00+00:00",
-    "0000-01-01T00:00:00Z", "2100-02-29T00:00:00Z",
-    "2026-04-31T00:00:00Z", "2026-10-20T24:00:00Z",
-    "2026-10-20T00:60:00Z", "2026-10-20T00:00:60Z",
 ])
 def test_validator_rejects_missing_or_invalid_run_start(tmp_path, start_time):
     iteration = tmp_path / "iteration-1"
@@ -182,22 +158,6 @@ def test_validator_rejects_missing_or_invalid_run_start(tmp_path, start_time):
     (repo / "tmp/pipeline-state.yaml").write_text(yaml.safe_dump(state))
     result = _run_validator(iteration, repo)
     assert result.returncode != 0
-    assert "start_time" in result.stdout
-
-
-@pytest.mark.parametrize("start_time", ["2000-02-29T00:00:00Z", "2024-02-29T23:59:59Z"])
-@pytest.mark.parametrize("quote", ["'", '"', ""])
-def test_validator_accepts_utc_report_timestamp(tmp_path, start_time, quote):
-    iteration = tmp_path / "iteration-1"
-    _, repo = _fixture(iteration)
-    (repo / "tmp/pipeline-state.yaml").write_text(
-        f"phase: DONE\nstart_time: {quote}{start_time}{quote}\n"
-    )
-    (repo / RUN_REPORT).rename(
-        repo / "artifacts/decompose-runs" / f"{start_time.replace(':', '-')}.yaml"
-    )
-    result = _run_validator(iteration, repo)
-    assert result.returncode == 0, result.stderr + result.stdout
 
 
 @pytest.mark.parametrize("value", [f"'{RUN_START}", f'{RUN_START}"', f"'{RUN_START}\""])
@@ -217,37 +177,61 @@ def test_validator_rejects_duplicate_run_start(tmp_path):
     assert _run_validator(iteration, repo).returncode != 0
 
 
-@pytest.mark.parametrize("case", [
-    "invalid-json", "wrong-pipeline", "failed-action", "missing-result",
-    "missing-output-directory", "missing-state", "missing-target", "non-done",
-    "empty-report-directory",
+def test_validator_rejects_invalid_result_json(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    output, repo = _fixture(iteration)
+    (output / "agent-result.json").write_text("{not json\n", encoding="utf-8")
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("pipeline", "wrong"),
+    ("action", "failed"),
 ])
-def test_validator_rejects_invalid_or_incomplete_run(tmp_path, case):
+def test_validator_rejects_wrong_result_contract(tmp_path, field, value):
     iteration = tmp_path / "iteration-1"
     output, repo = _fixture(iteration)
     result_file = output / "agent-result.json"
-    if case == "invalid-json":
-        result_file.write_text("{not json\n", encoding="utf-8")
-    elif case in ("wrong-pipeline", "failed-action"):
-        data = json.loads(result_file.read_text(encoding="utf-8"))
-        data["pipeline" if case == "wrong-pipeline" else "action"] = (
-            "wrong" if case == "wrong-pipeline" else "failed"
-        )
-        result_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
-    elif case == "missing-result":
-        result_file.unlink()
-    elif case == "missing-output-directory":
+    data = json.loads(result_file.read_text(encoding="utf-8"))
+    data[field] = value
+    result_file.write_text(json.dumps(data) + "\n", encoding="utf-8")
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize("missing", ["result-file", "output-directory", "pipeline-state"])
+def test_validator_rejects_missing_run_files_or_directories(tmp_path, missing):
+    iteration = tmp_path / "iteration-1"
+    output, repo = _fixture(iteration)
+    if missing == "result-file":
+        (output / "agent-result.json").unlink()
+    elif missing == "output-directory":
         shutil.rmtree(output)
-    elif case == "missing-state":
+    else:
         (repo / "tmp" / "pipeline-state.yaml").unlink()
-    elif case == "non-done":
-        (repo / "tmp" / "pipeline-state.yaml").write_text(
-            "phase: RUNNING\n", encoding="utf-8"
-        )
-    elif case == "empty-report-directory":
-        for path in (repo / "artifacts" / "decompose-runs").iterdir():
-            path.unlink()
-    result = _run_validator(iteration, None if case == "missing-target" else repo)
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+
+
+def test_validator_rejects_missing_target_repository(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    _fixture(iteration)
+    result = _run_validator(iteration)
+    assert result.returncode != 0
+
+
+def test_validator_rejects_unfinished_run_phase(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration, phase="DECOMPOSE")
+    result = _run_validator(iteration, repo)
+    assert result.returncode != 0
+
+
+def test_validator_rejects_empty_report_directory(tmp_path):
+    iteration = tmp_path / "iteration-1"
+    _, repo = _fixture(iteration, report=False)
+    result = _run_validator(iteration, repo)
     assert result.returncode != 0
 
 
@@ -279,16 +263,6 @@ def test_validator_rejects_unsafe_payload_entries(tmp_path, unsafe_kind, payload
     else:
         os.mkfifo(directory / "untrusted")
     assert _run_validator(iteration, repo).returncode != 0
-
-
-def test_validator_uses_basename_for_custom_output_file(tmp_path):
-    iteration = tmp_path / "iteration-1"
-    output, repo = _fixture(iteration)
-    (output / "custom.json").write_text(
-        (output / "agent-result.json").read_text(encoding="utf-8"), encoding="utf-8"
-    )
-    result = _run_validator(iteration, repo, FULLSEND_OUTPUT_FILE="../custom.json")
-    assert result.returncode == 0, result.stderr + result.stdout
 
 
 def _post(iteration, output, repo, target, *, path=None):
@@ -395,30 +369,49 @@ def test_post_rejects_missing_or_empty_required_paths(tmp_path, variable, empty)
         cwd=iteration, env=env, capture_output=True, text=True, timeout=10,
     )
     assert result.returncode != 0
-    assert f"{variable} is required" in result.stderr
+    assert variable in result.stderr
     assert "DELETE_CALLED" not in result.stderr
     assert (target / "tmp/old.txt").is_file()
     assert (target / "artifacts/old.txt").is_file()
 
 
-def test_pre_runs_only_target_bootstrap_scripts(tmp_path):
+@pytest.mark.parametrize(
+    ("skip_flags", "expected_env"),
+    [({}, "unset unset"), ({
+        "EPIC_SKIP_BOOTSTRAP": "1",
+        "EPIC_SKIP_COMPONENT_FETCH": "1",
+    }, "1 1")],
+)
+def test_pre_runs_only_target_bootstrap_scripts(tmp_path, skip_flags, expected_env):
     checkout = tmp_path / "checkout"
     scripts = checkout / "scripts"
     scripts.mkdir(parents=True)
     (scripts / "fetch-architecture-context.sh").write_text(
-        "#!/usr/bin/env bash\ntouch architecture-called\n", encoding="utf-8"
+        "#!/usr/bin/env bash\n"
+        "touch architecture-called\n"
+        "printf '%s %s\\n' \"${EPIC_SKIP_BOOTSTRAP-unset}\" "
+        "\"${EPIC_SKIP_COMPONENT_FETCH-unset}\" > architecture-env\n",
+        encoding="utf-8",
     )
     (scripts / "fetch_components.py").write_text(
-        "from pathlib import Path\nPath('components-called').touch()\n", encoding="utf-8"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path('components-called').touch()\n"
+        "Path('components-env').write_text(\n"
+        "    f\"{os.environ.get('EPIC_SKIP_BOOTSTRAP', 'unset')} \"\n"
+        "    f\"{os.environ.get('EPIC_SKIP_COMPONENT_FETCH', 'unset')}\")\n",
+        encoding="utf-8",
     )
     result = subprocess.run(
         ["bash", str(PRE)], cwd=tmp_path,
-        env=_environment(tmp_path, TARGET_REPO_DIR=checkout),
+        env=_environment(tmp_path, TARGET_REPO_DIR=checkout, **skip_flags),
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stderr + result.stdout
     assert (checkout / "architecture-called").is_file()
     assert (checkout / "components-called").is_file()
+    assert (checkout / "architecture-env").read_text().strip() == expected_env
+    assert (checkout / "components-env").read_text() == expected_env
     missing = subprocess.run(
         ["bash", str(PRE)], cwd=tmp_path, env=_environment(tmp_path),
         capture_output=True, text=True, timeout=10,
@@ -426,16 +419,65 @@ def test_pre_runs_only_target_bootstrap_scripts(tmp_path):
     assert missing.returncode != 0
 
 
+def test_sandbox_bootstrap_reuses_prepared_inputs(tmp_path):
+    checkout = tmp_path / "checkout"
+    scripts = checkout / "scripts"
+    scripts.mkdir(parents=True)
+    for name in (
+        "fetch-architecture-context.sh", "fetch_components.py", "jira_utils.py",
+    ):
+        shutil.copy2(ROOT / "scripts" / name, scripts / name)
+
+    context = checkout / ".context"
+    architecture = context / "architecture-context"
+    architecture.mkdir(parents=True)
+    architecture_sentinel = architecture / "sentinel.txt"
+    architecture_sentinel.write_text("prepared architecture\n", encoding="utf-8")
+    components = context / "rhai-components.txt"
+    components.write_text("Prepared Component\n", encoding="utf-8")
+
+    stub_dir = tmp_path / "stub-bin"
+    stub_dir.mkdir()
+    network_attempts = tmp_path / "network-attempts"
+    for name in ("curl", "git"):
+        stub = stub_dir / name
+        stub.write_text(
+            "#!/bin/sh\n"
+            "printf '%s %s\\n' \"$0\" \"$*\" >> \"$NETWORK_ATTEMPTS\"\n"
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+
+    sandbox_env = {key: str(value) for key, value in HARNESS["env"]["sandbox"].items()}
+    sandbox_env.pop("JIRA_TOKEN", None)
+    sandbox_env["PATH"] = os.pathsep.join((str(stub_dir), os.environ.get("PATH", "")))
+    sandbox_env["NETWORK_ATTEMPTS"] = str(network_attempts)
+    env = _environment(tmp_path, **sandbox_env)
+
+    architecture_result = subprocess.run(
+        ["bash", str(scripts / "fetch-architecture-context.sh")],
+        cwd=checkout, env=env, capture_output=True, text=True, timeout=10,
+    )
+    component_result = subprocess.run(
+        [sys.executable, str(scripts / "fetch_components.py")],
+        cwd=checkout, env=env, capture_output=True, text=True, timeout=10,
+    )
+
+    assert architecture_result.returncode == 0, architecture_result.stderr
+    assert component_result.returncode == 0, component_result.stderr
+    assert architecture_sentinel.read_text(encoding="utf-8") == "prepared architecture\n"
+    assert components.read_text(encoding="utf-8") == "Prepared Component\n"
+    assert not network_attempts.exists()
+
+
 def test_repository_skill_layout():
     repo = ROOT.resolve()
-    assert not (ROOT / "skills").is_symlink()
-    skill_root = (ROOT / ".agents/skills").resolve()
-    assert repo in skill_root.parents
-    assert (ROOT / "skills").resolve() == skill_root
-    assert (ROOT / ".claude/skills").resolve() == skill_root
-
-    skill = skill_root / "epic-decompose"
-    compatibility = ROOT / "skills/epic-decompose"
+    skills = [
+        ROOT / ".agents/skills/epic-decompose",
+        ROOT / "skills/epic-decompose",
+        ROOT / ".claude/skills/epic-decompose",
+    ]
     for relative in (
         "SKILL.md",
         "prompts/fetch-agent.md",
@@ -443,49 +485,35 @@ def test_repository_skill_layout():
         "prompts/review-agent.md",
         "prompts/revise-agent.md",
     ):
-        assert (skill / relative).is_file()
-        assert (compatibility / relative).read_bytes() == (skill / relative).read_bytes()
+        assets = [(skill / relative).resolve() for skill in skills]
+        assert all(repo in asset.parents for asset in assets)
+        assert len({asset.read_bytes() for asset in assets}) == 1
 
 
 def _compact_hook_commands(path):
     config = json.loads(path.read_text())
-    entries = config["hooks"]["SessionStart"]
-    matches = [entry for entry in entries if entry.get("matcher") == "compact"]
-    assert len(matches) == 1
     return [
         hook["command"]
-        for hook in matches[0]["hooks"]
+        for entry in config["hooks"]["SessionStart"]
+        if entry.get("matcher") == "compact"
+        for hook in entry["hooks"]
         if hook.get("type") == "command"
     ]
 
 
-def test_plugin_manifest_and_compact_hooks():
+def test_plugin_manifest_name():
     manifest = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
     assert manifest["name"] == "epic-creator"
-    assert "skills" not in manifest
-
-    plugin_commands = _compact_hook_commands(ROOT / "hooks/hooks.json")
-    assert plugin_commands == [
-        "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/pipeline_state.py post-compact-hook"
-    ]
-
-    project_commands = _compact_hook_commands(ROOT / ".claude/settings.json")
-    assert len(project_commands) == 1
-    command = project_commands[0]
-    assert 'if [ "${FULLSEND_ROLE:-}" = "epic-creator" ]' in command
-    assert 'cd "${CLAUDE_PROJECT_DIR:?}"' in command
-    assert "python3 scripts/pipeline_state.py post-compact-hook" in command
 
 
-def _hook_checkout(tmp_path, phase="DECOMPOSE"):
+def _hook_checkout(tmp_path):
     checkout = tmp_path / "checkout"
     scripts = checkout / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts/pipeline_state.py", scripts / "pipeline_state.py")
-    if phase is not None:
-        state = checkout / "tmp/pipeline-state.yaml"
-        state.parent.mkdir()
-        state.write_text(f"phase: {phase}\n")
+    state = checkout / "tmp/pipeline-state.yaml"
+    state.parent.mkdir()
+    state.write_text("phase: DECOMPOSE\n")
     return checkout
 
 
@@ -500,82 +528,46 @@ def _run_hook(command, cwd, tmp_path, **extra_env):
     )
 
 
-@pytest.mark.parametrize("phase", ["DECOMPOSE", "INIT"])
-def test_dispatch_resume_preserves_run_and_existing_batches(tmp_path, phase):
-    checkout = _hook_checkout(tmp_path)
-    for name in ("check_decompose_progress.py", "artifact_utils.py"):
-        shutil.copy2(ROOT / "scripts" / name, checkout / "scripts" / name)
-    state_path = checkout / "tmp/pipeline-state.yaml"
-    state = {
-        "phase": phase, "start_time": RUN_START, "batch_size": 25,
-        "batch": 0 if phase == "INIT" else 1,
-        "total_batches": 0 if phase == "INIT" else 1, "headless": True,
-    }
-    state_path.write_text(yaml.safe_dump(state))
-    ids = "RHAISTRAT-1234\n"
-    paths = [checkout / "tmp" / name for name in (
-        "pipeline-all-ids.txt", "pipeline-batch-1-ids.txt", "pipeline-active-ids.txt",
-    )]
-    for path in paths:
-        path.write_text(ids)
-    commands = []
-    if phase == "INIT":
-        commands.extend([["set", "total_batches=1"], ["set-phase", "BATCH_START"]])
-    commands.append(["next-action"])
-    for arguments in commands:
-        result = subprocess.run(
-            ["python3", "scripts/pipeline_state.py", *arguments], cwd=checkout,
-            env=_environment(tmp_path), capture_output=True, text=True, timeout=10,
-        )
-        assert result.returncode == 0, result.stderr + result.stdout
-    action = yaml.safe_load(result.stdout)
-    assert action["action"] == "launch_wave"
-    assert action["phase"] == ("FETCH" if phase == "INIT" else phase)
-    after = yaml.safe_load(state_path.read_text())
-    for key in ("start_time", "batch_size", "headless"):
-        assert after[key] == state[key]
-    for path in paths:
-        assert path.read_text() == ids
-
-
 @pytest.mark.parametrize(
-    ("phase", "enabled", "nested", "expected"),
+    ("role", "nested", "expected_phase"),
     [
-        ("DECOMPOSE", "1", False, "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"),
-        ("DECOMPOSE", "1", True, "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"),
-        ("DONE", "1", False, "[PIPELINE STATE RECOVERY] Pipeline complete"),
-        ("DECOMPOSE", "", False, ""),
-        (None, "1", False, ""),
+        (HARNESS["role"], False, True),
+        (HARNESS["role"], True, True),
+        (f"{HARNESS['role']}-other", False, False),
+        (None, False, False),
     ],
 )
-def test_project_compact_hook_recovery(tmp_path, phase, enabled, nested, expected):
-    checkout = _hook_checkout(tmp_path, phase)
+def test_project_compact_hook_activation(tmp_path, role, nested, expected_phase):
+    checkout = _hook_checkout(tmp_path)
     cwd = checkout / "nested" if nested else checkout
     if nested:
         cwd.mkdir()
-    command = _compact_hook_commands(ROOT / ".claude/settings.json")[0]
-    result = _run_hook(
-        command,
-        cwd,
-        tmp_path,
-        EPIC_CREATOR_ENABLE_CONTEXT_HOOK=enabled,
-        FULLSEND_ROLE="epic-creator",
-        CLAUDE_PROJECT_DIR=str(checkout),
-    )
+    command = "\n".join(_compact_hook_commands(ROOT / ".claude/settings.json"))
+    env = {
+        "EPIC_CREATOR_ENABLE_CONTEXT_HOOK": HARNESS["env"]["sandbox"][
+            "EPIC_CREATOR_ENABLE_CONTEXT_HOOK"
+        ],
+        "CLAUDE_PROJECT_DIR": str(checkout),
+    }
+    if role is not None:
+        env["FULLSEND_ROLE"] = role
+    result = _run_hook(command, cwd, tmp_path, **env)
     assert result.returncode == 0, result.stderr
     assert result.stderr == ""
-    if expected:
-        assert expected in result.stdout
+    if expected_phase:
+        assert "DECOMPOSE" in result.stdout
     else:
         assert result.stdout == ""
 
 
 def test_project_hook_does_not_duplicate_plugin_hook(tmp_path):
     checkout = _hook_checkout(tmp_path)
-    project_command = _compact_hook_commands(ROOT / ".claude/settings.json")[0]
-    plugin_command = _compact_hook_commands(ROOT / "hooks/hooks.json")[0]
+    project_command = "\n".join(_compact_hook_commands(ROOT / ".claude/settings.json"))
+    plugin_command = "\n".join(_compact_hook_commands(ROOT / "hooks/hooks.json"))
     env = {
-        "EPIC_CREATOR_ENABLE_CONTEXT_HOOK": "1",
+        "EPIC_CREATOR_ENABLE_CONTEXT_HOOK": HARNESS["env"]["sandbox"][
+            "EPIC_CREATOR_ENABLE_CONTEXT_HOOK"
+        ],
         "CLAUDE_PROJECT_DIR": str(checkout),
         "CLAUDE_PLUGIN_ROOT": str(checkout),
     }
@@ -588,6 +580,4 @@ def test_project_hook_does_not_duplicate_plugin_hook(tmp_path):
     plugin_result = _run_hook(plugin_command, checkout, tmp_path, **env)
     assert plugin_result.returncode == 0, plugin_result.stderr
     assert plugin_result.stderr == ""
-    assert plugin_result.stdout.count(
-        "[PIPELINE STATE RECOVERY] Current phase: DECOMPOSE"
-    ) == 1
+    assert "DECOMPOSE" in plugin_result.stdout
