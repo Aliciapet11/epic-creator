@@ -19,8 +19,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from jira_utils import require_env, api_call_with_retry
 
 PROJECT = "RHAI"
-OUTPUT_PATH = os.path.join(
-    os.path.dirname(__file__), "..", ".context", "rhai-components.txt")
+OUTPUT_PATH = os.path.join(".context", "rhai-components.txt")
 
 
 def fetch_components(server, user, token):
