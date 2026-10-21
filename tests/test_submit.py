@@ -49,6 +49,17 @@ def _run_fm(*args):
     assert result.returncode == 0, f"frontmatter.py failed: {result.stderr}"
 
 
+def _run_submit(*args):
+    """Use a temporary component file."""
+    _write(".context/rhai-components.txt", "MLflow\nvLLM\nDocumentation\n")
+    result = subprocess.run(
+        [PYTHON, SCRIPT, *args],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"submit.py failed: {result.stderr}"
+    return result
+
+
 def _setup_strategy(strat_id="RHAISTRAT-9999", epic_count=2, review_pass=True,
                     review_score=12):
     """Create minimal strategy, epic, decomposition, and review artifacts."""
@@ -667,11 +678,7 @@ class TestDryRun:
 
     def test_dry_run_creates_plan(self, tmp_dir):
         _setup_strategy()
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "RHAISTRAT-9999-E001" in result.stdout
         assert "RHAISTRAT-9999-E002" in result.stdout
         assert "DRY RUN" in result.stdout
@@ -679,67 +686,44 @@ class TestDryRun:
 
     def test_dry_run_skips_failing_review(self, tmp_dir):
         _setup_strategy(review_pass=False, review_score=5)
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "SKIP" in result.stdout
         assert "1 strategies skipped" in result.stdout
 
     def test_dry_run_shows_priority_mapping(self, tmp_dir):
         _setup_strategy()
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "Critical" in result.stdout  # P0
 
     def test_dry_run_shows_dependencies(self, tmp_dir):
         _setup_strategy()
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "blocked by" in result.stdout
 
     def test_dry_run_shows_component_warning(self, tmp_dir):
         _setup_strategy()
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         # Component shows in parens because no mapping exists
         assert "(test-component)" in result.stdout
+        assert "not in RHAI component list" in result.stderr
 
     def test_dry_run_all(self, tmp_dir):
         _setup_strategy("RHAISTRAT-1001")
         _setup_strategy("RHAISTRAT-1002")
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "--all"],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0
+        result = _run_submit("--dry-run", "--all")
         assert "RHAISTRAT-1001" in result.stdout
         assert "RHAISTRAT-1002" in result.stdout
 
     def test_dry_run_labels(self, tmp_dir):
         _setup_strategy()
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "epic-creator-auto-decomposed" in result.stdout
 
     def test_dry_run_shows_already_created(self, tmp_dir):
         _setup_strategy()
         _run_fm("set", "artifacts/epic-tasks/RHAISTRAT-9999-E001.md",
                 "jira_key=RHAI-100")
-        result = subprocess.run(
-            [PYTHON, SCRIPT, "--dry-run", "RHAISTRAT-9999"],
-            capture_output=True, text=True,
-        )
-        assert result.returncode == 0
+        result = _run_submit("--dry-run", "RHAISTRAT-9999")
         assert "Already created" in result.stdout
         assert "RHAI-100" in result.stdout
         # Only E002 is pending

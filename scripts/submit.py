@@ -71,8 +71,7 @@ DEPENDENCY_LINK_TYPE = "Blocks"
 
 # ─── Component Validation ────────────────────────────────────────────────────
 
-COMPONENTS_PATH = os.path.join(
-    os.path.dirname(__file__), "..", ".context", "rhai-components.txt")
+COMPONENTS_PATH = os.path.join(".context", "rhai-components.txt")
 
 
 def _load_valid_components():
