@@ -1,13 +1,13 @@
 ---
-id: epic-creator-jira
+id: jira
 display_name: Jira
-description: Read-only Jira access
+description: Jira
 category: data
 credentials:
-  - name: jira_token
+  - name: api_token
+    description: Jira API token
     env_vars: [JIRA_TOKEN]
     required: true
-    auth_style: basic
 endpoints:
   - host: redhat.atlassian.net
     port: 443

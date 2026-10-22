@@ -1,5 +1,5 @@
 ---
-name: epic-creator-jira
-type: epic-creator-jira
+name: jira
+type: jira
 credentials:
   JIRA_TOKEN: "${JIRA_TOKEN}"
