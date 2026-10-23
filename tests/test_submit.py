@@ -714,6 +714,11 @@ class TestDryRun:
         assert "RHAISTRAT-1001" in result.stdout
         assert "RHAISTRAT-1002" in result.stdout
 
+    def test_all_with_no_decompositions_succeeds(self, tmp_dir):
+        result = _run_submit("--dry-run", "--all")
+        assert result.returncode == 0
+        assert "No decompositions found" in result.stdout
+
     def test_dry_run_labels(self, tmp_dir):
         _setup_strategy()
         result = _run_submit("--dry-run", "RHAISTRAT-9999")

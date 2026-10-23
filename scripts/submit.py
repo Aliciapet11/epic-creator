@@ -653,8 +653,10 @@ def main():
     if args.all:
         strat_ids = _find_submittable_strats(args.artifacts_dir)
         if not strat_ids:
-            print("No decompositions found.", file=sys.stderr)
-            sys.exit(1)
+            # An empty batch (e.g. every strategy already has epics) is a
+            # normal outcome for scheduled runs, not a failure.
+            print("No decompositions found. Nothing to submit.")
+            return
     else:
         strat_ids = args.strat_ids
 
