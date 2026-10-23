@@ -651,10 +651,17 @@ def main():
 
     # Determine which strategies to submit
     if args.all:
+        epic_tasks_dir = os.path.join(args.artifacts_dir, "epic-tasks")
+        if not os.path.isdir(epic_tasks_dir):
+            print(f"Error: {epic_tasks_dir} is not a directory.",
+                  file=sys.stderr)
+            sys.exit(1)
         strat_ids = _find_submittable_strats(args.artifacts_dir)
         if not strat_ids:
-            print("No decompositions found.", file=sys.stderr)
-            sys.exit(1)
+            # An empty batch (e.g. every strategy already has epics) is a
+            # normal outcome for scheduled runs, not a failure.
+            print("No decompositions found. Nothing to submit.")
+            return
     else:
         strat_ids = args.strat_ids
 

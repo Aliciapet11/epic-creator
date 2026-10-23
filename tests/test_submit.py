@@ -714,6 +714,21 @@ class TestDryRun:
         assert "RHAISTRAT-1001" in result.stdout
         assert "RHAISTRAT-1002" in result.stdout
 
+    def test_all_with_no_decompositions_succeeds(self, tmp_dir):
+        os.makedirs("artifacts/epic-tasks")
+        result = _run_submit("--dry-run", "--all")
+        assert result.returncode == 0
+        assert "No decompositions found" in result.stdout
+
+    def test_all_with_missing_artifacts_dir_fails(self, tmp_dir):
+        result = subprocess.run(
+            [PYTHON, SCRIPT, "--dry-run", "--all",
+             "--artifacts-dir", "does-not-exist"],
+            capture_output=True, text=True,
+        )
+        assert result.returncode == 1
+        assert "is not a directory" in result.stderr
+
     def test_dry_run_labels(self, tmp_dir):
         _setup_strategy()
         result = _run_submit("--dry-run", "RHAISTRAT-9999")
